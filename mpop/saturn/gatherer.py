@@ -146,8 +146,9 @@ class Granule(SatelliteInstrumentScene):
                                                  "filename", raw=True))
                     file_glob = globify(file_template)
 
-                    if((the_directory == directory) and
-                        fnmatch(the_name, file_glob)):
+                    if((os.path.normpath(the_directory) ==
+                        os.path.normpath(directory)) and
+                       fnmatch(the_name, file_glob)):
                         try:
                             self.file_template = file_template
                             self.file_name = the_name
