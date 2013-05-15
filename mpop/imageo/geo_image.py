@@ -87,21 +87,20 @@ class GeoImage(mpop.imageo.image.Image):
         fformat = fformat or file_tuple[1][1:]
 
         if fformat.lower() in ('tif', 'tiff'):
-            self.geotiff_save(filename, compression, tags,
-                              gdal_options, blocksize, **kwargs)
-        else:
+            return self.geotiff_save(filename, compression, tags,
+                                     gdal_options, blocksize, **kwargs)
+        try:
+            # Let image.pil_save it ?
+            super(GeoImage, self).save(filename, compression, fformat=fformat, **kwargs)
+        except mpop.imageo.image.UnknownImageFormat:
+            # No ... last resort, try to import an external module. 
+            LOG.info("Trying to import an image saver module '%s.py'" % fformat)
             try:
-                # Does PIL knows about the format ?
-                super(GeoImage, self).save(filename, compression, fformat=fformat, **kwargs)
-            except mpop.imageo.image.UnknownImageFormat:
-                # no ... last resort, try to import an external module. 
-                LOG.info("Trying to import an image saver module '%s.py'" % fformat)
-                try:
-                    saver = __import__(fformat, globals(), locals(), ['save'])
-                except ImportError:
-                    raise  mpop.imageo.image.UnknownImageFormat(
-                        "Unknown image format '%s'" % fformat)
-                saver.save(self, filename, **kwargs)
+                saver = __import__(fformat, globals(), locals(), ['save'])
+            except ImportError:
+                raise  mpop.imageo.image.UnknownImageFormat(
+                    "Unknown image format '%s'" % fformat)
+            saver.save(self, filename, **kwargs)
 
     def _gdal_write_channels(self, dst_ds, channels, opacity, fill_value):
         """Write *channels* in a gdal raster structure *dts_ds*, using
