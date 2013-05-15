@@ -76,6 +76,10 @@ class GeoImage(mpop.imageo.image.Image):
         options for the gdal saving driver. A *blocksize* other than 0 will
         result in a tiled image (if possible), with tiles of size equal to
         *blocksize*.
+
+        If the specified format `fformat` is not know to MPOP (and PIL), we
+        will try to import module `fformat` and call the methode
+        `save_mpop_geo_image`.
         
 
         .. _geotiff: http://trac.osgeo.org/geotiff/
@@ -88,18 +92,17 @@ class GeoImage(mpop.imageo.image.Image):
                               gdal_options, blocksize, **kwargs)
         else:
             try:
-                # does PIL knows about the format ?
+                # Does PIL knows about the format ?
                 super(GeoImage, self).save(filename, compression, fformat=fformat, **kwargs)
             except mpop.imageo.image.UnknownImageFormat:
                 # no ... last resort, try to import an external module. 
                 LOG.info("Trying to import an image saver module '%s.py'" % fformat)
                 try:
-                    saver = __import__(fformat, globals(), locals(), ['save'])
+                    saver = __import__(fformat, globals(), locals(), ['save_mpop_geo_image'])
                 except ImportError:
                     raise  mpop.imageo.image.UnknownImageFormat(
                         "Unknown image format '%s'" % fformat)
-                kwargs['mpop_geo_image'] = self
-                saver.save(filename, **kwargs)
+                saver.save_mpop_geo_image(self, filename, **kwargs)
 
     def _gdal_write_channels(self, dst_ds, channels, opacity, fill_value):
         """Write *channels* in a gdal raster structure *dts_ds*, using
