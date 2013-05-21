@@ -212,7 +212,7 @@ class MsgCloudType(mpop.channel.GenericChannel):
         return self.filled
 
 # ------------------------------------------------------------------
-    def read(self, filename, calibrate=True):
+    def read(self, filename):
         """Reader for the NWCSAF/MSG cloudtype. Use *filename* to read data.
         """
         import h5py
@@ -287,14 +287,8 @@ class MsgCloudType(mpop.channel.GenericChannel):
 
         h5f.close()
         
-        if calibrate:
-            self.cloudtype = (self.cloudtype.data * self.cloudtype.scaling_factor
-                              + self.cloudtype.offset)
-            self.cloudphase = (self.cloudphase.data * self.cloudphase.scaling_factor
-                               + self.cloudphase.offset)
-        else:
-            self.cloudtype = self.cloudtype.data
-            self.cloudphase = self.cloudphase.data
+        self.cloudtype = self.cloudtype.data
+        self.cloudphase = self.cloudphase.data
         self.processing_flags = self.processing_flags.data
 
         self.area = get_area_from_file(filename)
