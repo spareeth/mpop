@@ -91,10 +91,10 @@ class GeoImage(mpop.imageo.image.Image):
                                      gdal_options, blocksize, **kwargs)
         try:
             # Let image.pil_save it ?
-            super(GeoImage, self).save(filename, compression, fformat=fformat, **kwargs)
+            super(GeoImage, self).save(filename, compression, fformat=fformat)
         except mpop.imageo.image.UnknownImageFormat:
             # No ... last resort, try to import an external module. 
-            LOG.info("Trying to import an image saver module '%s.py'" % fformat)
+            LOG.info("Will import an image saver module '%s'" % fformat)
             try:
                 saver = __import__(fformat, globals(), locals(), ['save'])
             except ImportError:
