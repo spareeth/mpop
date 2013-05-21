@@ -315,7 +315,7 @@ def get_product_config(product_name=None, filename=None):
         from ConfigParser import ConfigParser        
 
         def _find_a_config_file():
-            name_ = 'ninjotiff_products.conf'
+            name_ = 'ninjotiff_products.cfg'
             home_ = os.path.dirname(os.path.abspath(__file__))
             penv_ = os.environ.get('PPP_CONFIG_DIR', '')
             for fname_ in [os.path.join(x, name_) for x in (home_, penv_)]:
