@@ -5,7 +5,8 @@
 
 # Author(s):
 
-#   Adam.Dybbroe <a000680@c14526.ad.smhi.se>
+#   Adam.Dybbroe <adam.dybbroe@smhi.se>
+#   Helge Pfeiffer <rhp@dmi.dk>
 
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -59,7 +60,6 @@ class SentinelGRDChannel(mpop.channel.GenericChannel):
     def project(self, coverage):
         """Project what can be projected in the product.
         """
-        
         import copy
         res = copy.copy(self)
         res.data = coverage.project_array(self.data)
