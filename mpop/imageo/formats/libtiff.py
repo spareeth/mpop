@@ -673,7 +673,7 @@ class TIFF(ctypes.c_void_p):
 
         return status
 
-    def read_tiles(self, dtype=np.uint8):
+    def read_tiles(self):
         num_trows = self.GetField("TileLength")
         if num_trows is None:
             raise ValueError("TIFFTAG_TILELENGTH must be set to write tiles")
@@ -687,6 +687,15 @@ class TIFF(ctypes.c_void_p):
         if num_icols is None:
             raise ValueError("TIFFTAG_TILEWIDTH must be set to write tiles")
 
+        bits_per_sample = self.GetField('BitsPerSample')
+        sample_format = self.GetField('SampleFormat')
+        dtype = self.get_numpy_type(bits_per_sample, sample_format)
+        if dtype is None:
+            if bits_per_sample == 1:
+                dtype = np.uint8
+            else:
+                raise NotImplementedError(`bits_per_sample`)
+        
         if self.is_rgb():
             full_image = np.zeros((num_irows, num_icols, 3), dtype=dtype)
             tmp_tile = np.zeros((num_trows, num_tcols, 3), dtype=dtype)
@@ -726,8 +735,8 @@ class TIFF(ctypes.c_void_p):
                 raise ValueError("TIFFTAG_SAMPLEPERPIXEl is inconsistent for a RGB image, reading %d expecting 3" %
                                 spp)
             bps = self.GetField("BitsPerSample")
-            if bps != 8:
-                raise ValueError("TIFFTAG_BITSPERSAMPL is inconsistent for a RGB image, reading %d expecting 8" %
+            if bps not in (8, 16):
+                raise ValueError("TIFFTAG_BITSPERSAMPL is inconsistent for a RGB image, reading %d expecting 8 or 16" %
                                 bps)
             return True
         return False

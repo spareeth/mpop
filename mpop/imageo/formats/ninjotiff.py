@@ -42,7 +42,7 @@ import numpy as np
 import mpop.imageo.formats.libtiff as libtiff
 from mpop.imageo.formats.libtiff import TIFF, TIFFFieldInfo, TIFFDataType, FIELD_CUSTOM
 
-log = logging.getLogger(__name__)
+LOG = logging.getLogger(__name__)
 
 #------------------------------------------------------------------------------- 
 #
@@ -53,6 +53,7 @@ log = logging.getLogger(__name__)
 GTF_ModelPixelScale        = 33550
 GTF_ModelTiepoint          = 33922 
 
+# Ninjo specific tags
 NTD_Magic                  = 40000
 NTD_SatelliteNameID        = 40001
 NTD_DateID                 = 40002
@@ -334,8 +335,7 @@ class ProductConfigs(object):
                 return str(val)
 
         filename = self._find_a_config_file()
-        #print "Reading Ninjo config file: '%s'" % filename
-        log.info("Reading Ninjo config file: '%s'" % filename)
+        LOG.info("Reading Ninjo config file: '%s'" % filename)
 
         cfg = ConfigParser()
         cfg.read(filename)
@@ -470,7 +470,8 @@ def colortable(filename):
 #
 #-------------------------------------------------------------------------------
 def _get_physic_value(physic_unit):
-    # return Ninjo's physics unit and value.
+    # If just a physical unit (e.g. 'C') is passed, it will be
+    # translated into Ninjo's unit and value (e.q 'CELCIUS' and 'T').
     if physic_unit.upper() in ('K', 'KELVIN'):
         return 'Kelvin', 'T'
     elif physic_unit.upper() in ('C', 'CELSIUS'):
@@ -502,8 +503,15 @@ def _get_pixel_size(projection_name, area_def):
         pixel_size = abs(lower_right[0] - upper_left[0])/area_def.shape[1],\
             abs(upper_left[1] - lower_right[1])/area_def.shape[0]
     elif projection_name in ('NPOL', 'SPOL'):
-        pixel_size = (np.rad2deg(area_def.pixel_size_x/float(area_def.proj_dict['a'])), 
-                      np.rad2deg(area_def.pixel_size_y/float(area_def.proj_dict['b'])))
+        try:
+            earth_a = area_def.proj_dict['a']
+            earth_b = area_def.proj_dict['b']
+        except KeyError:
+            raise ValueError("Please specify earth shape in projection" + 
+                             " definition (option '-a' and '-b')")            
+        pixel_size = (np.rad2deg(area_def.pixel_size_x/float(earth_a)),
+                      np.rad2deg(area_def.pixel_size_y/float(earth_b)))
+            
     else:
         raise ValueError("Could determine pixel size from projection name '%s'" %
                          projection_name + " (Unknown)")
@@ -521,13 +529,15 @@ def _get_satellite_altitude(filename):
             return alt_
     return 0
 
-def _finalize(geo_image):
+def _finalize(geo_image, dtype=np.uint8):
     """Finalize a mpop GeoImage for Ninjo. Specialy take care of phycical scale
     and offset.
 
     :Parameters:
         geo_image : mpop.imageo.geo_image.GeoImage
             See MPOP's documentation.
+        dtype : type
+            Numpy's datatype (np.uint8 or np.uint16).
 
     :Returns:
         image : numpy.array
@@ -542,11 +552,26 @@ def _finalize(geo_image):
     **Notes**:
         physic_val = image*scale + offset
     """
+    def _log_channel(name, data, fill_value, scale=0, offset=0):
+        if not LOG.isEnabledFor(logging.DEBUG):
+            return
+        _mask = data == fill_value
+        _data = np.ma.array(data, mask=_mask)
+        no_data_size = np.ma.count_masked(_data)
+        per_cov = 100.*float(_data.size - no_data_size)/float(_data.size)
+        LOG.debug("After scaling: %s (%s) %d, %d, %d (%.2f%% coverage)" % (
+                name, _data.dtype, _data.min(), _data.mean(), _data.max(),
+                per_cov))
+        if scale:
+            _data = _data*scale + offset
+            LOG.debug("Physic values: %s (%s) %.2f, %.2f, %.2f" % (
+                    name, _data.dtype, _data.min(), _data.mean(), _data.max()))
+        del _data, _mask
+        
     if geo_image.mode == 'L':
         # PFE: mpop.satout.cfscene
-        dtype = np.uint8
         data = geo_image.channels[0]
-        fill_value = geo_image.fill_value or 0
+        fill_value = 0
         if np.ma.count_masked(data) == data.size:
             # All data is masked
             data = np.ones(data.shape, dtype=dtype) * fill_value
@@ -555,32 +580,37 @@ def _finalize(geo_image):
         else:
             chn_max = data.max()
             chn_min = data.min()
+            # Reserve 0 for transparent pixel.
+            max_val = np.iinfo(dtype).max - 1
                
-            scale = ((chn_max - chn_min) /
-                     (2**np.iinfo(dtype).bits - 1.0))
-            # Handle the case where all data has the same value.
-            scale = scale or 1
+            scale = (chn_max - chn_min)/float(max_val)
+            scale = scale or 1.
             offset = chn_min
                 
             mask = data.mask
             data = ((data.data - offset) / scale).astype(dtype)
+            # Move away from 0.
+            data += 1
+            offset -= scale
             data[mask] = fill_value
+
+        _log_channel('0', data, fill_value, scale, offset)
         return data, scale, offset, fill_value
 
     elif geo_image.mode == 'RGB':
-        channels, fill_value = geo_image._finalize()
+        channels, fill_value = geo_image._finalize(dtype=dtype)
         fill_value = fill_value or (0, 0, 0)
-        data = np.dstack((channels[0].filled(fill_value[0]),
-                          channels[1].filled(fill_value[1]),
-                          channels[2].filled(fill_value[2])))
+        for i in range(3):
+            channels[i] = channels[i].filled(fill_value[i])
+            _log_channel(str(i), channels[i], fill_value[i], 0)
+        data = np.dstack(channels)
         return data, 1.0, 0.0, fill_value[0]
 
     else:
         raise ValueError("Don't known how til handle image mode '%s'" %
                          str(geo_image.mode))
-        
-    
-def save(geo_image, filename, ninjo_product_name=None, **kwargs):
+
+def save(geo_image, filename, ninjo_product_name=None, bits_per_sample=8, **kwargs):
     """MPOP's interface to Ninjo TIFF writer.
 
     :Parameters:
@@ -591,10 +621,28 @@ def save(geo_image, filename, ninjo_product_name=None, **kwargs):
     :Keywords:
         ninjo_product_name : str
             Optional index to Ninjo configuration file.   
+        bits_per_sample : integer.
+            Sample size (8 or 16).
         kwargs : dict
             See _write
+
+    **Notes**:
+       * 8 bits grayscale with a colormap (inverted for IR channels).
+       * 16 bits grayscale with no colormap (IR with MinIsWhite tag).
+       * max and min values will be reserved for transparent color.
+       * RGB images will use mpop.imageo.image's standard finalize. 
+    
     """
-    data, scale, offset, fill_value = _finalize(geo_image)
+    bps_to_dtype = {8: np.uint8,
+                   16: np.uint16}
+
+    try:
+        dtype = bps_to_dtype[bits_per_sample]
+    except KeyError:
+        raise ValueError("Unsupported bits per sample '%s' (use one of %s)" % 
+                         (bits_per_sample, str(bps_to_dtype.keys())))
+    
+    data, scale, offset, fill_value = _finalize(geo_image, dtype=dtype)
     area_def = geo_image.area
     time_slot = geo_image.time_slot
 
@@ -618,6 +666,7 @@ def write(image_data, output_fn, area_def, product_name=None, **kwargs):
     :Parameters:
         image_data : 2D numpy array
             Satellite image data to be put into the NinJo compatible tiff
+            (dtype determine 8 or 16 bit)
         output_fn : str
             The name of the TIFF file to be created
         area_def: pyresample.geometry.AreaDefinition
@@ -635,19 +684,17 @@ def write(image_data, output_fn, area_def, product_name=None, **kwargs):
     if len(image_data.shape) == 3:
         shape = (area_def.y_size, area_def.x_size, 3)
         write_rgb = True
-        log.info("Will generate RGB product '%s'" % product_name)
+        LOG.info("Will generate RGB product '%s'" % product_name)
     else:
         shape = (area_def.y_size, area_def.x_size)
         write_rgb = False
-        log.info("Will generate product '%s'" % product_name)
+        LOG.info("Will generate product '%s'" % product_name)
 
     if image_data.shape != shape:
-        raise ValueError, "Raster shape %s does not correspond to expected shape %s" % (
-            str(image_data.shape), str(shape))
+        raise ValueError("Raster shape %s does not correspond to expected shape %s" % (
+                str(image_data.shape), str(shape)))
 
     # Ninjo's physical units and value.
-    # If just a physical unit (e.g. 'C') is passed, it will then be
-    # translated into Ninjo's unit and value (e.q 'CELCIUS' and 'T').
     physic_unit = kwargs.get('physic_unit', None)
     if physic_unit and not kwargs.get('physic_value', None):
         kwargs['physic_unit'], kwargs['physic_value'] = \
@@ -684,9 +731,9 @@ def write(image_data, output_fn, area_def, product_name=None, **kwargs):
         options['radius_b'] = area_def.proj_dict['a']
     options['origin_lon'] = upper_left[0]
     options['origin_lat'] = upper_left[1]
-    options['min_gray_val'] = image_data.min()
-    options['max_gray_val'] = image_data.max()
-    options.update(kwargs) # Update/overwrite with passed arguments
+    options['min_gray_val'] = 1
+    options['max_gray_val'] = np.iinfo(image_data.dtype).max -1
+    options.update(kwargs) # Update/overwrite passed arguments
 
     _write(image_data, output_fn, write_rgb=write_rgb, **options)
     
@@ -789,17 +836,17 @@ def _write(image_data, output_fn, write_rgb=False, **kwargs):
         description : str
             Description string to be placed in the output TIFF (optional)
         transparent_pix : int
-            Transparent pixel value (default -1)
+            Transparent pixel value (default 0)
     :Raises:
         KeyError :
             if required keyword is not provided
     """
     def _raise_value_error(text):
-        log.error(text)
+        LOG.error(text)
         raise ValueError(text)
     
-    def _default_colormap(reverse=False):
-         # Basic B&W colormap
+    def _default_colormap_bps8(reverse=False):
+        # Basic B&W colormap
         if reverse:
             return [[ x*256 for x in range(255, -1, -1) ]]*3
         return [[ x*256 for x in range(256) ]]*3
@@ -810,7 +857,7 @@ def _write(image_data, output_fn, write_rgb=False, **kwargs):
         except KeyError:
             return None
 
-    log.info("Creating output file '%s'" % (output_fn,))
+    LOG.info("Creating output file '%s'" % (output_fn,))
     tiff = TIFF.open(output_fn, "w")
 
     # Extract keyword arguments
@@ -834,8 +881,8 @@ def _write(image_data, output_fn, write_rgb=False, **kwargs):
     ref_lat1 = _eval_or_none("ref_lat1", float)
     ref_lat2 = _eval_or_none("ref_lat2", float)
     central_meridian = _eval_or_none("central_meridian", float)
-    min_gray_val = int(kwargs.pop("min_gray_val", 0))
-    max_gray_val = int(kwargs.pop("max_gray_val", 255))
+    min_gray_val = int(kwargs.pop("min_gray_val", 1))
+    max_gray_val = int(kwargs.pop("max_gray_val", np.iinfo(image_data.dtype).max))
     altitude = float(kwargs.pop("altitude", 0.0))
     is_blac_corrected = int(bool(kwargs.pop("is_blac_corrected", 0)))
     is_atmo_corrected = int(bool(kwargs.pop("is_atmo_corrected", 0)))
@@ -848,19 +895,35 @@ def _write(image_data, output_fn, write_rgb=False, **kwargs):
     gradient = float(kwargs.pop("gradient", 1.0))
     axis_intercept = float(kwargs.pop("axis_intercept", 0.0))
 
-    transparent_pix = int(kwargs.pop("transparent_pix", -1))
+    transparent_pix = int(kwargs.pop("transparent_pix", 0))
+    
+    bits_per_sample = np.iinfo(image_data.dtype).bits
+    min_sample_value = 1
+    max_sample_value = np.iinfo(image_data.dtype).max
 
+    #
     # Keyword checks / verification
-    if not cmap:
-        if physic_value == 'T':
-            reverse = True
+    #
+
+    if not write_rgb:
+        min_is_white = False
+        if bits_per_sample == 8:
+            #
+            # Generate color map for 8 bit grayscale.
+            #
+            if not cmap:
+                if physic_value.upper() == 'T':
+                    cmap = _default_colormap_bps8(reverse=True)
+                else:
+                    cmap = _default_colormap_bps8(reverse=False)
+            if len(cmap) != 3:
+                _raise_value_error("Colormap (cmap) must be a list of 3 lists (RGB), not %d" %
+                                   len(cmap))
         else:
-            reverse = False
-        cmap = _default_colormap(reverse)
+            if physic_value.upper() == 'T':
+                #transparent_pix = np.iinfo(image_data.dtype).max - transparent_pix
+                min_is_white = True
             
-    if len(cmap) != 3:
-        _raise_value_error("Colormap (cmap) must be a list of 3 lists (RGB), not %d" %
-                           len(cmap))
 
     if len(data_cat) != 4:
         _raise_value_error("NinJo data type must be 4 characters")
@@ -875,7 +938,7 @@ def _write(image_data, output_fn, write_rgb=False, **kwargs):
                            ("['RN','RB','RA','BN','AN']", data_cat[2:4]))
 
     if description is not None and len(description) >= 1000:
-        log.error("NinJo description must be less than 1000 characters")
+        LOG.error("NinJo description must be less than 1000 characters")
         raise ValueError("NinJo description must be less than 1000 characters")
 
     file_dt = datetime.utcnow()
@@ -883,25 +946,32 @@ def _write(image_data, output_fn, write_rgb=False, **kwargs):
     image_epoch = calendar.timegm(image_dt.timetuple())
 
     def _write_oneres(image_data, pixel_xres, pixel_yres):
-        log.info("Writing tags and data for a resolution %dx%d" % image_data.shape[:2])
+        LOG.info("Writing tags and data for a resolution %dx%d (bps: %d)" % (
+                image_data.shape[0], image_data.shape[1],
+                bits_per_sample))
 
         # Write Tag Data
         
         # Built ins
         tiff.SetField("ImageWidth", image_data.shape[1])
         tiff.SetField("ImageLength", image_data.shape[0])
-        tiff.SetField("BitsPerSample", 8)
+        tiff.SetField("BitsPerSample", bits_per_sample)
         tiff.SetField("Compression", libtiff.COMPRESSION_DEFLATE)
         if write_rgb:
             tiff.SetField("Photometric", libtiff.PHOTOMETRIC_RGB)
             tiff.SetField("SamplesPerPixel", 3)
         else:
-            tiff.SetField("Photometric", libtiff.PHOTOMETRIC_PALETTE)
             tiff.SetField("SamplesPerPixel", 1)
-            tiff.SetField("ColorMap", cmap)
+            if cmap:
+                tiff.SetField("Photometric", libtiff.PHOTOMETRIC_PALETTE)
+                tiff.SetField("ColorMap", cmap)
+            elif min_is_white:
+                tiff.SetField("Photometric", libtiff.PHOTOMETRIC_MINISWHITE)
+            else:
+                tiff.SetField("Photometric", libtiff.PHOTOMETRIC_MINISBLACK)
         tiff.SetField("Orientation", libtiff.ORIENTATION_TOPLEFT)
-        tiff.SetField("SMinSampleValue", 0)
-        tiff.SetField("SMaxsampleValue", 255)
+        tiff.SetField("SMinSampleValue", min_sample_value)
+        tiff.SetField("SMaxsampleValue", max_sample_value)
         tiff.SetField("PlanarConfig", libtiff.PLANARCONFIG_CONTIG)
         tiff.SetField("TileWidth", tile_width)
         tiff.SetField("TileLength", tile_length)
@@ -930,7 +1000,7 @@ def _write(image_data, output_fn, write_rgb=False, **kwargs):
         elif cmap:
             tiff.SetField("ColorDepth", 16)
         else:
-            tiff.SetField("ColorDepth", 8)
+            tiff.SetField("ColorDepth", bits_per_sample)
         tiff.SetField("DataSource", data_source)
         tiff.SetField("XMinimum", 1)
         tiff.SetField("XMaximum", image_data.shape[1])
@@ -968,7 +1038,7 @@ def _write(image_data, output_fn, write_rgb=False, **kwargs):
         tiff.write_tiles(image_data)
         tiff.WriteDirectory()
 
-    # Write multi-resolution overviews (or not)
+    # Write multi-resolution overviews.
     tiff.SetDirectory(0)
     _write_oneres(image_data, pixel_xres, pixel_yres)
     for index, scale in enumerate((2, 4, 8, 16)):
@@ -977,9 +1047,11 @@ def _write(image_data, output_fn, write_rgb=False, **kwargs):
         if shape[0] > tile_width and shape[1] > tile_length:
             tiff.SetDirectory(index + 1)
             _write_oneres(image_data[::scale,::scale], pixel_xres*scale, pixel_yres*scale)
+        else:
+            break
     tiff.close()
 
-    log.info("Successfully created a NinJo tiff file: '%s'" % (output_fn,))
+    LOG.info("Successfully created a NinJo tiff file: '%s'" % (output_fn,))
 
 if __name__ == '__main__':
     import sys

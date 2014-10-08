@@ -35,3 +35,12 @@ REGION: msg_hrvn_pc {
         YSIZE:         5000
         AREA_EXTENT:   (-5005380.72, 3061575.43, 5007807.48, 8068169.53)
 };
+
+REGION: msg_ninjo_europe {
+        NAME:          A shunk of Europe, good for products in Ninjo (WE -40 -> 30, SN 25 -> 70)
+        PCS_ID:        ninjo_europe_PLAT
+        PCS_DEF:       proj=eqc,lon_0=0.0,lat_0=0.0
+        XSIZE:         1299
+        YSIZE:         835
+        AREA_EXTENT:   (-4452779.63, 2782987.27,3339584.72, 7792364.36)
+};

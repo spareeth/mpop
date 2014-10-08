@@ -29,6 +29,9 @@ ninjotiff_config = {
             'data_source': 'EUMETCAST',}
 }
 
+The config file should be placed in $PPP_CONFIG_DIR, see:
+https://github.com/mraspaud/mpop/blob/pre-master/etc/ninjotiff_products.cfg.template
+
 Saving an image for 'chn' will then go like:
 
     image.save(filename,
@@ -50,7 +53,7 @@ except KeyError:
 from mpop.satellites import GeostationaryFactory
 import mpop.utils
 
-#mpop.utils.debug_on()
+mpop.utils.debug_on()
 LOG = mpop.utils.get_logger(__name__)
 
 # Handle argument.
@@ -67,15 +70,19 @@ SATNO = "%02d" % (7 + int(i__[2][3]))
 # Areas to be loaded into and to be projected onto.
 AREAS = (
     ('visir_full', 'MSGF', 'msg_pc'),
-    ('hrv_north', 'MSGHRVN', 'msg_hrvn_pc')
+    #('visir_europe', 'MSGF', 'msg_ninjo_europe_big'),
+    ('hrv_north', 'MSGHRVN', 'msg_hrvn_pc'),
     )
 
 CHANNEL_DICT = {
-    #'visir_full': (0.6, 0.8, 1.6, 3.9, 6.2, 7.3, 8.7, 9.7, 10.8, 12.0, 13.4),
-    'visir_full': (0.6, 10.8,),
-    'hrv_north': ('HRV',)
+    'visir_full': [0.6, 0.8, 1.6, 3.9, 6.2, 7.3, 8.7, 9.7, 10.8, 12.0, 13.4],
+    #'visir_full': [0.6, 10.8],
+    #'visir_europe': [0.6, 10.8],
+    'hrv_north': ['HRV']
     }
 
+DO_CONVECTION = False
+BITS_PER_SAMPLE = 16
 
 for area_name, area_in, area_out in AREAS:
 
@@ -118,13 +125,47 @@ for area_name, area_in, area_out in AREAS:
         # config file.
         #
         filename = ('MSG-' + TIMESLOT.strftime("%Y%m%d_%H%M") + '-' +
-                    area_name.split('_')[-1] + '-' + chn_name + '.tif')
+                    area_name.split('_')[-1] + '-' + chn_name + '.%db.tif' % BITS_PER_SAMPLE)
         LOG.info("Saving to Ninjo tif %s" % filename)
         img.save(filename,
                  fformat='mpop.imageo.formats.ninjotiff',
                  physic_unit=physic_unit,
-                 ninjo_product_name=chn_name)
+                 ninjo_product_name=chn_name,
+                 bits_per_sample=BITS_PER_SAMPLE)
 
         # Cleanup.
         scene.unload([chn])
         global_data.unload([chn])
+
+if DO_CONVECTION:
+    #
+    # RGB example, convection
+    #
+    # NOT ready for 16 bit
+    BITS_PER_SAMPLE = 8
+    
+    product_name = 'convection'
+    area_name, area_in, area_out = ('visir_europe', 'MSGNH', 'msg_ninjo_europe_big')   
+    channels = [0.635, 1.63, 3.75, 6.7, 7.3, 10.8]
+
+    global_data = GeostationaryFactory.create_scene("meteosat",
+                                                    SATNO, 
+                                                    "seviri", 
+                                                    area=area_in,
+                                                    time_slot=TIMESLOT)
+
+    # Load channels.
+    global_data.load(channels)
+
+    # Resample to Plate Caree.
+    scene = global_data.project(area_out, mode='quick', precompute=True)
+    img = scene.image.convection()
+
+    filename = ('MSG-' + TIMESLOT.strftime("%Y%m%d_%H%M") + '-' +
+                area_name.split('_')[-1] + '-' + product_name + '.%db.tif' % BITS_PER_SAMPLE)
+    LOG.info("Saving to Ninjo tif %s" % filename)
+    img.save(filename,
+             fformat='mpop.imageo.formats.ninjotiff',
+             ninjo_product_name='msg_' + product_name,
+             bits_per_sample=BITS_PER_SAMPLE)
+
