@@ -126,7 +126,7 @@ class GeoTiffReader(Reader):
 
     def load_granule(self, filename):
         """Load one sentinel granule file"""
-        from geotiepoints.basic_sat_interpolation import BasicSatelliteInterpolator
+        from geotiepoints.basic_interpolator import BasicSatelliteInterpolator
 
         params, data = read_geotiff(filename)
         tie_lons = params['tiepoints']['lons']
