@@ -126,7 +126,7 @@ class GeoTiffReader(Reader):
 
     def load_granule(self, filename):
         """Load one sentinel granule file"""
-        from geotiepoints import SatelliteInterpolator
+        from geotiepoints.basic_sat_interpolation import BasicSatelliteInterpolator
 
         params, data = read_geotiff(filename)
         tie_lons = params['tiepoints']['lons']
@@ -134,12 +134,10 @@ class GeoTiffReader(Reader):
         tie_cols = params['tiepoints']['cols']
         tie_rows = params['tiepoints']['rows']
 
-        fine_cols = np.arange(0, data.shape[1])
-        fine_rows = np.arange(0, data.shape[0])
-        interpolator = SatelliteInterpolator((tie_lons, tie_lats),
-                                             (tie_rows, tie_cols),
-                                             (fine_rows, fine_cols),
-                                             1, 3)
+        interpolator = BasicSatelliteInterpolator(tie_cols, 
+                                                tie_rows, 
+                                                tie_lats, 
+                                                tie_lons)
         lons, lats = interpolator.interpolate()
         
         return lons, lats, data
