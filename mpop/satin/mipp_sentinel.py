@@ -7,6 +7,7 @@
 
 #   Adam.Dybbroe <adam.dybbroe@smhi.se>
 #   Helge Pfeiffer <rhp@dmi.dk>
+#   Lars Orum Rasmussen <ras@dmi.dk>
 
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -28,10 +29,14 @@ import ConfigParser
 import os
 
 from mipp.read_geotiff import read_geotiff
+from mipp.xsar import S1A
+
 from datetime import datetime
 import numpy as np
 
 from glob import glob
+
+from pyresample import geometry
 import mpop
 from mpop import CONFIG_PATH
 import logging
@@ -42,10 +47,11 @@ from mpop.plugin_base import Reader
 
 class SentinelGRDChannel(mpop.channel.GenericChannel):
 
-    def __init__(self, name='unknown'):
+    def __init__(self, name='unknown', resolution='unknown'):
         mpop.channel.GenericChannel.__init__(self)
         self._is_loaded = False
         self.name = name
+        self.resolution = resolution
         self.data = None
         self.shape = None
         self._projectables = []
@@ -88,44 +94,42 @@ class GeoTiffReader(Reader):
         dirlist = glob(path_template)
         
         if len(dirlist) != 1:
-            raise IOError("Couldn't identify a unique measurments directory!")
+            raise IOError("Couldn't identify a unique measurments directory!, " +
+                          "from path_template '%s'" % path_template)
 
         dirname = dirlist[0]
         if not os.path.exists(dirname):
             raise IOError('Directory ' + str(dirname) + ' does not exist')
 
-        filelist = glob(os.path.join(dirname, options["filename"]))
-        if len(filelist) == 0:
-            LOG.warning('No files found!')
-            
-        lons = np.array([])
-        lats = np.array([])
-        data = np.array([])
-        # Concatenation of granules
-        for granule_file in filelist:
-            LOG.debug('Load granule: ' + str(granule_file))
-            local_lons, local_lats, local_data = self.load_granule(granule_file)
-            lons = np.concatenate([lons, local_lons.ravel()])
-            lats = np.concatenate([lats, local_lats.ravel()])
-            data = np.concatenate([data, local_data.ravel()])
-    
-        # fill the scene object
-        from pyresample import geometry
-        satscene.area = geometry.SwathDefinition(lons=lons, lats=lats)
+        # Read meta data
+        mda = S1A.read_metadata(dirname)
+        channels_available = set(mda.channels.keys())
 
-        # Take only the fist - assume only one channel!
-        # FIXME!
-        for chname in satscene.channels_to_load:
-            chn = SentinelGRDChannel(chname)
-            chn.set_loaded()
+        ##filelist = glob(os.path.join(dirname, options["filename"]))
+        ##if len(filelist) == 0:
+        ##    LOG.warning('No files found!')
+
+        channels_to_load = satscene.channels_to_load.intersection(channels_available)
+        
+        # Loading of channels
+        LOG.debug('available channels to load: ' + str(channels_to_load))
+        for channel_name in channels_to_load:
+            channel_file = mda.channels[channel_name]
+            LOG.debug("Load channel: '%s' %s" % (channel_name, str(channel_file)))
+            lons, lats, data = self.load_channel(channel_file)
+    
+            chn = SentinelGRDChannel(channel_name, mda.pixel_spacing[0])
+            chn.area = geometry.SwathDefinition(lons=lons, lats=lats)
             chn.data = np.ma.masked_array(data)
             chn.shape = data.shape
-            satscene[chname] = chn
-            break
+            chn.set_loaded()
+            satscene[channel_name] = chn
+
+        satscene.info['manifest'] = mda
 
 
-    def load_granule(self, filename):
-        """Load one sentinel granule file"""
+    def load_channel(self, filename):
+        """Load one sentinel channel file"""
         from geotiepoints.basic_interpolator import BasicSatelliteInterpolator
 
         params, data = read_geotiff(filename)
@@ -135,9 +139,9 @@ class GeoTiffReader(Reader):
         tie_rows = params['tiepoints']['rows']
 
         interpolator = BasicSatelliteInterpolator(tie_cols, 
-                                                tie_rows, 
-                                                tie_lats, 
-                                                tie_lons)
-        lons, lats = interpolator.interpolate()
+                                                  tie_rows, 
+                                                  tie_lats, 
+                                                  tie_lons)
+        lats, lons = interpolator.interpolate()
         
         return lons, lats, data
