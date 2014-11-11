@@ -70,7 +70,8 @@ PROJNAME = {"vertical_perspective": "nsper",
             "equirectangular": "eqc",
             "transverse_mercator": "tmerc",
             "stereographic": "stere",
-            "general_oblique_transformation": "ob_tran"
+            "general_oblique_transformation": "ob_tran",
+            "lambert_azimuthal_equal_area": "laea"
     }
 
 def _load02(filename):
