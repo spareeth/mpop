@@ -134,7 +134,8 @@ class GeoImage(Image):
     def geotiff_save(self, filename, compression=6,
                      tags=None, gdal_options=None,
                      blocksize=0, geotransform=None,
-                     spatialref=None, floating_point=False):
+                     spatialref=None, floating_point=False,
+                     clip_zero=False):
         """Save the image to the given *filename* in geotiff_ format, with the
         *compression* level in [0, 9]. 0 means not compressed. The *tags*
         argument is a dict of tags to include in the image (as metadata).  By
@@ -176,6 +177,13 @@ class GeoImage(Image):
                 gformat = gdal.GDT_Byte
             opacity = np.iinfo(dtype).max
             channels, fill_value = self._finalize(dtype)
+
+        # 
+        # Quick fix to reserve 0 as "transparent pixel" value.
+        # 
+        if clip_zero:
+            for i in range(len(channels)):
+                channels[i].data[channels[i].data == 0] = 1
 
         logger.debug("Saving to GeoTiff.")
 
