@@ -108,15 +108,25 @@ class GeoImage(Image):
                     "Unknown image format '%s'" % fformat)
             saver.save(self, filename, **kwargs)
 
-    def _gdal_write_channels(self, dst_ds, channels, opacity, fill_value):
+    def _gdal_write_channels(self, dst_ds, channels, opacity, fill_value,
+                             clip_fill_value=None):
         """Write *channels* in a gdal raster structure *dts_ds*, using
         *opacity* as alpha value for valid data, and *fill_value*.
         """
         if fill_value is not None:
             for i, chan in enumerate(channels):
+                band = dst_ds.GetRasterBand(i + 1)
+                if clip_fill_value is not None:
+                    logger.debug("Replacing all %d's with %d" % (
+                            fill_value[i], clip_fill_value))
+                    chan.data[chan.data == fill_value[i]] = clip_fill_value
+                    band.SetNoDataValue(fill_value[i])
                 chn = chan.filled(fill_value[i])
-                dst_ds.GetRasterBand(i + 1).WriteArray(chn)
+                band.WriteArray(chn)
         else:
+            if clip_fill_value is not None:
+                logger.warning("Writing alpha channel, 'clip_fill_value' will " +
+                               "be ignored")
             mask = np.zeros(channels[0].shape, dtype=np.bool)
             i = 0
             for i, chan in enumerate(channels):
@@ -135,16 +145,21 @@ class GeoImage(Image):
                      tags=None, gdal_options=None,
                      blocksize=0, geotransform=None,
                      spatialref=None, floating_point=False,
-                     clip_zero=False):
+                     clip_fill_value=None):
         """Save the image to the given *filename* in geotiff_ format, with the
-        *compression* level in [0, 9]. 0 means not compressed. The *tags*
-        argument is a dict of tags to include in the image (as metadata).  By
-        default it uses the 'area' instance to generate geotransform and
-        spatialref information, this can be overwritten by the arguments
-        *geotransform* and *spatialref*. *floating_point* allows the saving of
-        'L' mode images in floating point format if set to True.
+        DEFLATE *compression* level in [0, 9]. 0 means not compressed.
+        If compression is a string (e.g PACKBITS) that will be applied.
+        The *tags* argument is a dict of tags to include in the image
+        (as metadata). By default it uses the 'area' instance to 
+        generate geotransform and spatialref information, this can be
+        overwritten by the arguments *geotransform* and *spatialref*. 
+        *floating_point* allows the saving of 'L' mode images in floating
+        point format if set to True.
         
         .. _geotiff: http://trac.osgeo.org/geotiff/
+
+        If *clip_fill_value* is not None, then, before fill is applied, all
+        data equal to fill_value will be replaced with clip_fill_value.
         """
         from osgeo import gdal, osr
         
@@ -178,13 +193,6 @@ class GeoImage(Image):
             opacity = np.iinfo(dtype).max
             channels, fill_value = self._finalize(dtype)
 
-        # 
-        # Quick fix to reserve 0 as "transparent pixel" value.
-        # 
-        if clip_zero:
-            for i in range(len(channels)):
-                channels[i].data[channels[i].data == 0] = 1
-
         logger.debug("Saving to GeoTiff.")
 
         if tags is not None:
@@ -194,9 +202,12 @@ class GeoImage(Image):
 
         g_opts = ["=".join(i) for i in self.gdal_options.items()]
 
-        if compression != 0:
-            g_opts.append("COMPRESS=DEFLATE")
-            g_opts.append("ZLEVEL=" + str(compression))
+        if compression:
+            if isinstance(compression, int):
+                g_opts.append("COMPRESS=DEFLATE")
+                g_opts.append("ZLEVEL=" + str(compression))
+            else:
+                g_opts.append("COMPRESS=" + str(compression))
 
         if blocksize != 0:
             g_opts.append("TILED=YES")
@@ -221,7 +232,8 @@ class GeoImage(Image):
                                        gformat,
                                        g_opts)
             self._gdal_write_channels(dst_ds, channels,
-                                      opacity, fill_value)
+                                      opacity, fill_value,
+                                      clip_fill_value=clip_fill_value)
         elif(self.mode == "LA"):
             ensure_dir(filename)
             g_opts.append("ALPHA=YES")
@@ -253,7 +265,8 @@ class GeoImage(Image):
                                        g_opts)
 
             self._gdal_write_channels(dst_ds, channels,
-                                      opacity, fill_value)
+                                      opacity, fill_value,
+                                      clip_fill_value=clip_fill_value)
 
         elif(self.mode == "RGBA"):
             ensure_dir(filename)
