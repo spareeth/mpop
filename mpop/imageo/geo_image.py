@@ -109,23 +109,22 @@ class GeoImage(Image):
             saver.save(self, filename, **kwargs)
 
     def _gdal_write_channels(self, dst_ds, channels, opacity, fill_value,
-                             clip_fill_value=None):
+                             set_nodata_value=False):
         """Write *channels* in a gdal raster structure *dts_ds*, using
         *opacity* as alpha value for valid data, and *fill_value*.
+        If *set_nodata_value* (poor mans mask), each band will have 
+        set nodata value to fill_value.
         """
         if fill_value is not None:
             for i, chan in enumerate(channels):
                 band = dst_ds.GetRasterBand(i + 1)
-                if clip_fill_value is not None:
-                    logger.debug("Replacing all %d's with %d" % (
-                            fill_value[i], clip_fill_value))
-                    chan.data[chan.data == fill_value[i]] = clip_fill_value
+                if set_nodata_value:
                     band.SetNoDataValue(fill_value[i])
                 chn = chan.filled(fill_value[i])
                 band.WriteArray(chn)
         else:
-            if clip_fill_value is not None:
-                logger.warning("Writing alpha channel, 'clip_fill_value' will " +
+            if set_nodata_value:
+                logger.warning("Writing alpha channel, 'set_nodata_value' will " +
                                "be ignored")
             mask = np.zeros(channels[0].shape, dtype=np.bool)
             i = 0
@@ -145,7 +144,8 @@ class GeoImage(Image):
                      tags=None, gdal_options=None,
                      blocksize=0, geotransform=None,
                      spatialref=None, floating_point=False,
-                     clip_fill_value=None):
+                     set_nodata_value=False,
+                     _finalize = None):
         """Save the image to the given *filename* in geotiff_ format, with the
         DEFLATE *compression* level in [0, 9]. 0 means not compressed.
         If compression is a string (e.g PACKBITS) that will be applied.
@@ -158,8 +158,9 @@ class GeoImage(Image):
         
         .. _geotiff: http://trac.osgeo.org/geotiff/
 
-        If *clip_fill_value* is not None, then, before fill is applied, all
-        data equal to fill_value will be replaced with clip_fill_value.
+        If *set_nodata_value*, each band will have set nodata value to
+        fill_value. If *_finalize*, that will be used instead of
+        image._finalize. 
         """
         from osgeo import gdal, osr
         
@@ -191,7 +192,10 @@ class GeoImage(Image):
                 dtype = np.uint8
                 gformat = gdal.GDT_Byte
             opacity = np.iinfo(dtype).max
-            channels, fill_value = self._finalize(dtype)
+            if _finalize:
+                channels, fill_value = _finalize(self, dtype)
+            else:
+                channels, fill_value = self._finalize(dtype)
 
         logger.debug("Saving to GeoTiff.")
 
@@ -233,7 +237,7 @@ class GeoImage(Image):
                                        g_opts)
             self._gdal_write_channels(dst_ds, channels,
                                       opacity, fill_value,
-                                      clip_fill_value=clip_fill_value)
+                                      set_nodata_value=set_nodata_value)
         elif(self.mode == "LA"):
             ensure_dir(filename)
             g_opts.append("ALPHA=YES")
@@ -266,7 +270,7 @@ class GeoImage(Image):
 
             self._gdal_write_channels(dst_ds, channels,
                                       opacity, fill_value,
-                                      clip_fill_value=clip_fill_value)
+                                      set_nodata_value=set_nodata_value)
 
         elif(self.mode == "RGBA"):
             ensure_dir(filename)
