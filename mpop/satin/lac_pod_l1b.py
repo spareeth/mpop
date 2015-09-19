@@ -245,7 +245,7 @@ oldscanline = np.dtype([("scan_line_number", ">u2"),
 
 ####For L1B data post November 15, 1994
 #http://www.ncdc.noaa.gov/oa/pod-guide/ncdc/docs/podug/html/c2/sec2-0.htm
-header = np.dtype([("noaa_spacecraft_identification_code", ">u1"),
+newheader = np.dtype([("noaa_spacecraft_identification_code", ">u1"),
                    ("data_type_code", ">u1"),
                    ("start_time", ">u2", (3, )),
                    ("number_of_scans", ">u2"),
@@ -286,7 +286,7 @@ header = np.dtype([("noaa_spacecraft_identification_code", ">u1"),
                    ("spare2", ">u2", (1537, ))])
 
 
-scanline = np.dtype([("scan_line_number", ">u2"),
+newscanline = np.dtype([("scan_line_number", ">u2"),
                      ("time_code", ">u2", (3, )),
                      #("time_code", ">u1", (6, )),
                      ("quality_indicators", ">u4"),
@@ -303,6 +303,13 @@ scanline = np.dtype([("scan_line_number", ">u2"),
 
 
 class PODReader(LACReader):
+    instrument_ids = {4: 7,
+                      7: 9,
+                      8: 10,
+                      1: 11,
+                      5: 12,
+                      3: 14,
+                      }
 
     spacecrafts_orbital = {4: 'noaa 7',
                            7: 'noaa 9',
@@ -319,22 +326,21 @@ class PODReader(LACReader):
                         3: 'noaa14',
                         }
 
-    def read(self, filename, time):
+    def read(self, filename, time):	
         with open(filename) as fd_:
-            if time < datetime.datetime(1992, 10, 21, 00, 00, 00):
+	    if time > datetime.datetime(1994, 11, 15, 23, 59, 00):
+                header = newheader
+                scanline = newscanline
+            elif time < datetime.datetime(1992, 10, 21, 00, 00, 00):
                 header = oldestheader
                 scanline = oldestscanline
             elif time > datetime.datetime(1992, 10, 21, 00, 00, 00) and time < datetime.datetime(1994, 11, 15, 23, 59, 00):
                 header = oldheader
                 scanline = oldscanline
-            else:
-                header = header
-                scanline = scanline
-	    self.head = np.fromfile(fd_, dtype=header, count=1)[0]
-         # The value below is very important, in this case:15872, from the LAC header table last row.
+            self.head = np.fromfile(fd_, dtype=header, count=1)[0]
+         # The value below is very important, in this case:14800, from the LAC header table last row.
 	    fd_.seek(14800, 0)
-	    scans = np.fromfile(fd_, 
-                         dtype=scanline, count=self.head["number_of_scans"])
+	    scans = np.fromfile(fd_, dtype=scanline, count=self.head["number_of_scans"])
 
         if scans["scan_line_number"][0] == scans["scan_line_number"][-1] + 1:
             while scans["scan_line_number"][0] != 1:
@@ -345,7 +351,8 @@ class PODReader(LACReader):
         self.scans = scans[scans["scan_line_number"] != 0]
 
         self.spacecraft_id = self.head["noaa_spacecraft_identification_code"]
-        self.spacecraft_name = self.spacecraft_names[self.spacecraft_id]
+        self.instrument_id = self.instrument_ids[self.spacecraft_id]
+	self.spacecraft_name = self.spacecraft_names[self.spacecraft_id]
         self.channels = self.get_calibrated_channels()
 
 
@@ -397,22 +404,22 @@ class PODReader(LACReader):
 
             min_idx = min(line_indices)
             max_idx = max(max(line_indices),
-                          max(self.scans["scan_line_number"] - min_idx)) + 1
+                          max(line_indices - min_idx)) + 1
             idx_len = max_idx - min_idx + 2
+	    #import pdb;pdb.set_trace()
             complete_lons = np.zeros((idx_len, 2048), dtype=np.float) * np.nan
             complete_lats = np.zeros((idx_len, 2048), dtype=np.float) * np.nan
-
-            complete_lons[self.scans["scan_line_number"] - min_idx] = self.lons
-            complete_lats[self.scans["scan_line_number"] - min_idx] = self.lats
-
+	    
+            complete_lons[line_indices - min_idx] = self.lons
+            complete_lats[line_indices - min_idx] = self.lats
             missed_utcs = ((np.array(missed) - 1) * np.timedelta64(500, "ms")
                            + self.utcs[0])
 	    #calling compute_lonlat from lac_reader
             mlons, mlats = self.compute_lonlat(missed_utcs, True)
             nlons, nlats = gtp.Lac_Lat_Lon_Interpolator(mlons, mlats)
 	   
-            complete_lons[missed[0] - min_idx] = nlons
-            complete_lats[missed[0] - min_idx] = nlats
+            complete_lons[missed - min_idx] = nlons
+            complete_lats[missed - min_idx] = nlats
 	    
 	    
             from pygac.slerp import slerp
