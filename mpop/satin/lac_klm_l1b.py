@@ -8,7 +8,7 @@
 #   Abhay Devasthale <abhay.devasthale@smhi.se>
 #   Martin Raspaud <martin.raspaud@smhi.se>
 #   Adam Dybbroe <adam.dybbroe@smhi.se>  
-#   Sajid Pareeth <sajid.pareeth@fmch.it>
+#   Sajid Pareeth <sajid.pareeth@fmach.it>
 
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -156,8 +156,7 @@ def load_avhrr(satscene, options):
 AVHRR_CHANNEL_NAMES = {"1": 0, "2": 1, "3A": 2, "3B": 3, "4": 4, "5": 5}
 
 
-# GAC header object
-
+# LAC header object
 header = np.dtype([("data_set_creation_site_id", "S3"),
                    ("ascii_blank_=_x20", "S1"),
                    ("noaa_level_1b_format_version_number", ">u2"),
@@ -452,7 +451,6 @@ header = np.dtype([("data_set_creation_site_id", "S3"),
 
 
 # video data object
-
 scanline = np.dtype([("scan_line_number", ">u2"),
                      ("scan_line_year", ">i2"),
                      ("scan_line_day_of_year", ">u2"),
@@ -597,13 +595,22 @@ scanline = np.dtype([("scan_line_number", ">u2"),
 
 
 class KLMReader(LACReader):
+    instrument_ids = {4: 15,
+                     2: 16,
+                     6: 17,
+                     7: 18,
+                     8: 19,
+		     12: 'a',
+		     11: 'b',
+                    }
 
     spacecraft_names = {4: 'noaa15',
                         2: 'noaa16',
                         6: 'noaa17',
                         7: 'noaa18',
                         8: 'noaa19',
-                        12: 'metop02',
+                        12: 'metopa',
+			11: 'metopb',
                         }
     spacecrafts_orbital = {4: 'noaa 15',
                            2: 'noaa 16',
@@ -611,6 +618,7 @@ class KLMReader(LACReader):
                            7: 'noaa 18',
                            8: 'noaa 19',
                            12: 'metop 02',
+			   11: 'metop 01',
                            }
 
     def read(self, filename):
@@ -622,6 +630,7 @@ class KLMReader(LACReader):
                 fd_, dtype=scanline, count=self.head["count_of_data_records"])
 
         self.spacecraft_id = self.head["noaa_spacecraft_identification_code"]
+	self.instrument_id = self.instrument_ids[self.spacecraft_id]
         self.spacecraft_name = self.spacecraft_names[self.spacecraft_id]
 	self.channels = self.get_calibrated_channels()
 
