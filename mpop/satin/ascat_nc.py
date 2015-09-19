@@ -46,9 +46,7 @@ def load(satscene):
               "satname": satscene.satname,
               "number": satscene.number,
               "instrument": satscene.instrument_name,
-              "satellite": satscene.fullname,
-	      "time_slot": satscene.time_slot
-	      "time": satscene.time_slot.strftime('%Y%m%d%H%M%S')
+              "satellite": satscene.fullname
               }
     filename = os.path.join(
         conf.get("ascat-level2", "dir"),
